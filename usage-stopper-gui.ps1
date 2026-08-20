@@ -46,6 +46,7 @@ try {
     $script:pausedUntilEpoch = $cfg.pausedUntilEpoch
     $script:limits = $null
     $script:loading = $true   # suppress auto-save while controls are initialised
+    $script:isExiting = $false
 
     # ---------- usage fetch ----------
     function Get-FriendlyName([string]$kind, $scope) {
@@ -73,10 +74,72 @@ try {
     # ---------- form ----------
     $form = New-Object System.Windows.Forms.Form
     $form.Text = 'ClaudeCapper'
+    $form.Icon = [System.Drawing.SystemIcons]::Shield
     $form.FormBorderStyle = 'FixedSingle'
     $form.MaximizeBox = $false
     $form.ClientSize = New-Object System.Drawing.Size(460, 480)
     $form.Font = New-Object System.Drawing.Font('Segoe UI', 9)
+
+    # --- system tray icon & menu ---
+    $notifyIcon = New-Object System.Windows.Forms.NotifyIcon
+    $notifyIcon.Icon = [System.Drawing.SystemIcons]::Shield
+    $notifyIcon.Text = 'ClaudeCapper: Active'
+    $notifyIcon.Visible = $true
+
+    $trayMenu = New-Object System.Windows.Forms.ContextMenuStrip
+
+    function Restore-Window {
+        $form.Show()
+        $form.WindowState = [System.Windows.Forms.FormWindowState]::Normal
+        $form.ShowInTaskbar = $true
+        $form.BringToFront()
+        $form.Activate()
+    }
+
+    function Exit-Application {
+        $script:isExiting = $true
+        if ($notifyIcon) {
+            $notifyIcon.Visible = $false
+            $notifyIcon.Dispose()
+        }
+        $form.Close()
+        [System.Windows.Forms.Application]::Exit()
+    }
+
+    $itemOpen = New-Object System.Windows.Forms.ToolStripMenuItem('Open ClaudeCapper')
+    $itemOpen.Font = New-Object System.Drawing.Font($itemOpen.Font, [System.Drawing.FontStyle]::Bold)
+    $itemOpen.Add_Click({ Restore-Window })
+    $trayMenu.Items.Add($itemOpen) | Out-Null
+    $trayMenu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator)) | Out-Null
+
+    $itemP30 = New-Object System.Windows.Forms.ToolStripMenuItem('Pause 30 min')
+    $itemP30.Add_Click({ Set-Pause ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds() + 1800) })
+    $trayMenu.Items.Add($itemP30) | Out-Null
+
+    $itemP2h = New-Object System.Windows.Forms.ToolStripMenuItem('Pause 2 h')
+    $itemP2h.Add_Click({ Set-Pause ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds() + 7200) })
+    $trayMenu.Items.Add($itemP2h) | Out-Null
+
+    $itemPMan = New-Object System.Windows.Forms.ToolStripMenuItem('Pause until resumed')
+    $itemPMan.Add_Click({ Set-Pause ([long](-1)) })
+    $trayMenu.Items.Add($itemPMan) | Out-Null
+
+    $itemRes = New-Object System.Windows.Forms.ToolStripMenuItem('Resume')
+    $itemRes.Add_Click({ Set-Pause ([long]0) })
+    $trayMenu.Items.Add($itemRes) | Out-Null
+
+    $trayMenu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator)) | Out-Null
+
+    $itemExit = New-Object System.Windows.Forms.ToolStripMenuItem('Exit')
+    $itemExit.Add_Click({ Exit-Application })
+    $trayMenu.Items.Add($itemExit) | Out-Null
+
+    $notifyIcon.ContextMenuStrip = $trayMenu
+    $notifyIcon.Add_DoubleClick({ Restore-Window })
+    $notifyIcon.Add_MouseClick({
+        param($sender, $e)
+        if ($e.Button -eq [System.Windows.Forms.MouseButtons]::Left) { Restore-Window }
+    })
 
     # --- protection status + pause controls ---
     $grpStatus = New-Object System.Windows.Forms.GroupBox
@@ -193,7 +256,7 @@ try {
 
     $lblFooter = New-Object System.Windows.Forms.Label
     $lblFooter.SetBounds(12, 452, 436, 18)
-    $lblFooter.Text = 'Blocks apply to Claude Code everywhere on this machine (terminal, VS Code).'
+    $lblFooter.Text = 'Minimizing or closing hides to tray. Right-click tray icon to Exit.'
     $lblFooter.ForeColor = [System.Drawing.Color]::DimGray
     $form.Controls.Add($lblFooter)
 
@@ -211,6 +274,13 @@ try {
             if ($script:pausedUntilEpoch -ne 0) { $script:pausedUntilEpoch = [long]0; Save-Config }
             $lblStatus.Text = 'Active: Claude Code stops before extra usage is spent'
             $lblStatus.ForeColor = [System.Drawing.Color]::ForestGreen
+        }
+
+        if ($notifyIcon) {
+            $statusText = if ($script:pausedUntilEpoch -eq -1) { 'PAUSED (manual)' } elseif ($script:pausedUntilEpoch -gt $nowEpoch) { 'PAUSED' } else { 'Active' }
+            $text = "ClaudeCapper: $statusText"
+            if ($text.Length -gt 63) { $text = $text.Substring(0, 63) }
+            $notifyIcon.Text = $text
         }
     }
 
@@ -278,6 +348,27 @@ try {
     })
     $numPointsPerDay.Add_ValueChanged({ if (-not $script:loading) { Save-Config; Update-AllowedToday } })
 
+    $form.Add_Resize({
+        if ($form.WindowState -eq [System.Windows.Forms.FormWindowState]::Minimized) {
+            $form.Hide()
+            $form.ShowInTaskbar = $false
+        }
+    })
+
+    $form.Add_FormClosing({
+        param($sender, $e)
+        if (-not $script:isExiting -and $e.CloseReason -eq [System.Windows.Forms.CloseReason]::UserClosing) {
+            $e.Cancel = $true
+            $form.Hide()
+            $form.ShowInTaskbar = $false
+        } else {
+            if ($notifyIcon) {
+                $notifyIcon.Visible = $false
+                $notifyIcon.Dispose()
+            }
+        }
+    })
+
     $timer = New-Object System.Windows.Forms.Timer
     $timer.Interval = 60000
     $timer.Add_Tick({ Refresh-Usage; Update-StatusLabel })
@@ -290,7 +381,7 @@ try {
     Update-StatusLabel
     Refresh-Usage
 
-    [void]$form.ShowDialog()
+    [System.Windows.Forms.Application]::Run($form)
     $timer.Stop()
 }
 catch {
@@ -298,4 +389,3 @@ catch {
     try { [System.Windows.Forms.MessageBox]::Show("ClaudeCapper failed to start. See gui-error.log.") } catch {}
     exit 1
 }
-

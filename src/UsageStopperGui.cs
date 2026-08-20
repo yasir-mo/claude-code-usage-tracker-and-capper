@@ -37,6 +37,9 @@ public class UsageStopperForm : Form
     ProgressBar[] rowBar = new ProgressBar[4];
     Label[] rowPct = new Label[4];
     Timer timer;
+    NotifyIcon notifyIcon;
+    ContextMenuStrip trayMenu;
+    bool isExiting = false;
 
     [STAThread]
     public static void Main()
@@ -61,10 +64,36 @@ public class UsageStopperForm : Form
         ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12;
 
         Text = "ClaudeCapper";
+        Icon = SystemIcons.Shield;
         FormBorderStyle = FormBorderStyle.FixedSingle;
         MaximizeBox = false;
         ClientSize = new Size(460, 480);
         Font = new Font("Segoe UI", 9f);
+
+        // ---- system tray icon & menu ----
+        notifyIcon = new NotifyIcon();
+        notifyIcon.Icon = SystemIcons.Shield;
+        notifyIcon.Text = "ClaudeCapper: Active";
+        notifyIcon.Visible = true;
+
+        trayMenu = new ContextMenuStrip();
+        ToolStripMenuItem itemOpen = new ToolStripMenuItem("Open ClaudeCapper", null, delegate { RestoreWindow(); });
+        itemOpen.Font = new Font(itemOpen.Font, FontStyle.Bold);
+        trayMenu.Items.Add(itemOpen);
+        trayMenu.Items.Add(new ToolStripSeparator());
+        trayMenu.Items.Add(new ToolStripMenuItem("Pause 30 min", null, delegate { SetPause(DateTimeOffset.UtcNow.ToUnixTimeSeconds() + 1800); }));
+        trayMenu.Items.Add(new ToolStripMenuItem("Pause 2 h", null, delegate { SetPause(DateTimeOffset.UtcNow.ToUnixTimeSeconds() + 7200); }));
+        trayMenu.Items.Add(new ToolStripMenuItem("Pause until resumed", null, delegate { SetPause(-1); }));
+        trayMenu.Items.Add(new ToolStripMenuItem("Resume", null, delegate { SetPause(0); }));
+        trayMenu.Items.Add(new ToolStripSeparator());
+        trayMenu.Items.Add(new ToolStripMenuItem("Exit", null, delegate { ExitApplication(); }));
+        notifyIcon.ContextMenuStrip = trayMenu;
+
+        notifyIcon.DoubleClick += delegate { RestoreWindow(); };
+        notifyIcon.MouseClick += delegate(object sender, MouseEventArgs e)
+        {
+            if (e.Button == MouseButtons.Left) { RestoreWindow(); }
+        };
 
         // ---- protection / pause ----
         GroupBox grpStatus = new GroupBox();
@@ -163,7 +192,7 @@ public class UsageStopperForm : Form
 
         Label lblFooter = new Label();
         lblFooter.SetBounds(12, 452, 436, 18);
-        lblFooter.Text = "Blocks apply to Claude Code everywhere on this machine (terminal, VS Code).";
+        lblFooter.Text = "Minimizing or closing hides to tray. Right-click tray icon to Exit.";
         lblFooter.ForeColor = Color.DimGray;
         Controls.Add(lblFooter);
 
@@ -197,6 +226,56 @@ public class UsageStopperForm : Form
 
         UpdateStatusLabel();
         Shown += delegate { RefreshUsage(); };
+    }
+
+    void RestoreWindow()
+    {
+        Show();
+        WindowState = FormWindowState.Normal;
+        ShowInTaskbar = true;
+        BringToFront();
+        Activate();
+    }
+
+    void ExitApplication()
+    {
+        isExiting = true;
+        if (notifyIcon != null)
+        {
+            notifyIcon.Visible = false;
+            notifyIcon.Dispose();
+        }
+        Close();
+        Application.Exit();
+    }
+
+    protected override void OnResize(EventArgs e)
+    {
+        base.OnResize(e);
+        if (WindowState == FormWindowState.Minimized)
+        {
+            Hide();
+            ShowInTaskbar = false;
+        }
+    }
+
+    protected override void OnFormClosing(FormClosingEventArgs e)
+    {
+        if (!isExiting && e.CloseReason == CloseReason.UserClosing)
+        {
+            e.Cancel = true;
+            Hide();
+            ShowInTaskbar = false;
+        }
+        else
+        {
+            if (notifyIcon != null)
+            {
+                notifyIcon.Visible = false;
+                notifyIcon.Dispose();
+            }
+            base.OnFormClosing(e);
+        }
     }
 
     Button MakeButton(Control parent, string text, int x, int y, int w)
@@ -376,6 +455,14 @@ public class UsageStopperForm : Form
             lblStatus.Text = "Active: Claude Code stops before extra usage is spent";
             lblStatus.ForeColor = Color.ForestGreen;
         }
+
+        if (notifyIcon != null)
+        {
+            string statusText = (pausedUntilEpoch == -1) ? "PAUSED (manual)" : (pausedUntilEpoch > now) ? "PAUSED" : "Active";
+            string text = "ClaudeCapper: " + statusText;
+            if (text.Length > 63) text = text.Substring(0, 63);
+            notifyIcon.Text = text;
+        }
     }
 
     void SetPause(long untilEpoch)
@@ -385,4 +472,3 @@ public class UsageStopperForm : Form
         UpdateStatusLabel();
     }
 }
-
