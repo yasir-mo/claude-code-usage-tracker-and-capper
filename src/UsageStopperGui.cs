@@ -367,9 +367,18 @@ public class UsageStopperForm : Form
             body = reader.ReadToEnd();
         }
         var data = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(body);
-        if (!data.ContainsKey("limits") || !(data["limits"] is ArrayList))
+        if (!data.ContainsKey("limits") || data["limits"] == null)
             throw new Exception("usage response contained no limits field");
-        return (ArrayList)data["limits"];
+
+        ArrayList result = new ArrayList();
+        if (data["limits"] is IEnumerable)
+        {
+            foreach (object item in (IEnumerable)data["limits"])
+            {
+                result.Add(item);
+            }
+        }
+        return result;
     }
 
     static string FriendlyName(string kind, object scope)
@@ -405,36 +414,42 @@ public class UsageStopperForm : Form
             try
             {
                 ArrayList newLimits = FetchUsage();
-                this.BeginInvoke((MethodInvoker)delegate
+                if (this.IsHandleCreated && !this.IsDisposed)
                 {
-                    limits = newLimits;
-                    int i = 0;
-                    foreach (object o in limits)
+                    this.BeginInvoke((MethodInvoker)delegate
                     {
-                        if (i >= 4) break;
-                        var limit = (Dictionary<string, object>)o;
-                        string reset = ResetLocal(limit);
-                        string resetText = reset.Length > 0 ? " (resets " + reset + ")" : "";
-                        object scope = limit.ContainsKey("scope") ? limit["scope"] : null;
-                        double pct = Convert.ToDouble(limit["percent"], CultureInfo.InvariantCulture);
-                        rowName[i].Text = FriendlyName((string)limit["kind"], scope) + resetText;
-                        rowBar[i].Value = (int)Math.Min(100, Math.Max(0, pct));
-                        rowPct[i].Text = pct.ToString("0.#", CultureInfo.InvariantCulture) + "%";
-                        rowName[i].Visible = rowBar[i].Visible = rowPct[i].Visible = true;
-                        i++;
-                    }
-                    for (; i < 4; i++) rowName[i].Visible = rowBar[i].Visible = rowPct[i].Visible = false;
-                    lblFetched.Text = "Updated " + DateTime.Now.ToString("HH:mm:ss");
-                    UpdateAllowedToday();
-                });
+                        limits = newLimits;
+                        int i = 0;
+                        foreach (object o in limits)
+                        {
+                            if (i >= 4) break;
+                            var limit = (Dictionary<string, object>)o;
+                            string reset = ResetLocal(limit);
+                            string resetText = reset.Length > 0 ? " (resets " + reset + ")" : "";
+                            object scope = limit.ContainsKey("scope") ? limit["scope"] : null;
+                            double pct = Convert.ToDouble(limit["percent"], CultureInfo.InvariantCulture);
+                            rowName[i].Text = FriendlyName((string)limit["kind"], scope) + resetText;
+                            rowBar[i].Value = (int)Math.Min(100, Math.Max(0, pct));
+                            rowPct[i].Text = pct.ToString("0.#", CultureInfo.InvariantCulture) + "%";
+                            rowName[i].Visible = rowBar[i].Visible = rowPct[i].Visible = true;
+                            i++;
+                        }
+                        for (; i < 4; i++) rowName[i].Visible = rowBar[i].Visible = rowPct[i].Visible = false;
+                        lblFetched.Text = "Updated " + DateTime.Now.ToString("HH:mm:ss");
+                        UpdateAllowedToday();
+                    });
+                }
             }
             catch (Exception ex)
             {
-                this.BeginInvoke((MethodInvoker)delegate
+                if (this.IsHandleCreated && !this.IsDisposed)
                 {
-                    lblFetched.Text = "Could not load usage: " + ex.Message;
-                    UpdateAllowedToday();
-                });
+                    this.BeginInvoke((MethodInvoker)delegate
+                    {
+                        lblFetched.Text = "Could not load usage: " + ex.Message;
+                        UpdateAllowedToday();
+                    });
+                }
             }
         });
     }
