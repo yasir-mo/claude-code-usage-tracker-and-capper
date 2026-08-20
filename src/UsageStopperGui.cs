@@ -26,6 +26,7 @@ public class UsageStopperForm : Form
     long pausedUntilEpoch = 0;
     bool loading = true;
     bool shownBalloon = false;
+    bool userInitialized = false;
     ArrayList limits = null;
 
     Label lblStatus;
@@ -230,11 +231,17 @@ public class UsageStopperForm : Form
         loading = false;
 
         UpdateStatusLabel();
-        Shown += delegate {
-            BringToFront();
-            Activate();
-            RefreshUsage();
-        };
+    }
+
+    protected override void OnShown(EventArgs e)
+    {
+        base.OnShown(e);
+        userInitialized = true;
+        WindowState = FormWindowState.Normal;
+        ShowInTaskbar = true;
+        BringToFront();
+        Activate();
+        RefreshUsage();
     }
 
     void RestoreWindow()
@@ -261,7 +268,7 @@ public class UsageStopperForm : Form
     protected override void OnResize(EventArgs e)
     {
         base.OnResize(e);
-        if (WindowState == FormWindowState.Minimized)
+        if (userInitialized && WindowState == FormWindowState.Minimized)
         {
             Hide();
             ShowInTaskbar = false;
