@@ -6,7 +6,7 @@
 //
 // Build (no SDK needed, uses the compiler shipped with .NET Framework 4.x):
 //   C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe /nologo /target:winexe
-//     /out:ClaudeCapper.exe /r:System.Web.Extensions.dll src\UsageStopperGui.cs
+//     /win32icon:assets\icon.ico /out:ClaudeCapper.exe /r:System.Web.Extensions.dll src\UsageStopperGui.cs
 
 using System;
 using System.Collections;
@@ -68,7 +68,24 @@ public class UsageStopperForm : Form
         ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12;
 
         Text = "ClaudeCapper";
-        Icon = SystemIcons.Shield;
+        
+        // Load custom embedded icon or asset file
+        Icon appIcon = null;
+        string iconPath = Path.Combine(toolDir, "assets\\icon.ico");
+        if (File.Exists(iconPath))
+        {
+            try { appIcon = new Icon(iconPath); } catch { }
+        }
+        if (appIcon == null)
+        {
+            try { appIcon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { }
+        }
+        if (appIcon == null)
+        {
+            appIcon = SystemIcons.Shield;
+        }
+
+        Icon = appIcon;
         StartPosition = FormStartPosition.CenterScreen;
         ShowInTaskbar = true;
         FormBorderStyle = FormBorderStyle.FixedSingle;
@@ -81,7 +98,7 @@ public class UsageStopperForm : Form
 
         // ---- system tray icon & menu ----
         notifyIcon = new NotifyIcon();
-        notifyIcon.Icon = SystemIcons.Shield;
+        notifyIcon.Icon = appIcon;
         notifyIcon.Text = "ClaudeCapper: Active";
         notifyIcon.Visible = true;
 

@@ -57,7 +57,7 @@ When minimized or closed, ClaudeCapper stays running in the Windows system tray 
 The exe is unsigned, so Windows SmartScreen may show an "unknown publisher" warning on first run; choose "More info" then "Run anyway", or build it yourself from source with the compiler that ships with Windows:
 
 ```
-C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe /nologo /target:winexe /out:ClaudeCapper.exe /r:System.Web.Extensions.dll src\UsageStopperGui.cs
+C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe /nologo /target:winexe /win32icon:assets\icon.ico /out:ClaudeCapper.exe /r:System.Web.Extensions.dll src\UsageStopperGui.cs
 ```
 
 ## Limitations

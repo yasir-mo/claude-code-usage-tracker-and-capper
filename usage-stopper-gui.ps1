@@ -47,6 +47,18 @@ try {
     $script:limits = $null
     $script:loading = $true   # suppress auto-save while controls are initialised
     $script:isExiting = $false
+    $script:userInitialized = $false
+    $script:shownBalloon = $false
+
+    # ---------- custom icon ----------
+    $appIcon = $null
+    $iconPath = Join-Path $toolDir 'assets\icon.ico'
+    if (Test-Path $iconPath) {
+        try { $appIcon = New-Object System.Drawing.Icon($iconPath) } catch {}
+    }
+    if ($null -eq $appIcon) {
+        $appIcon = [System.Drawing.SystemIcons]::Shield
+    }
 
     # ---------- usage fetch ----------
     function Get-FriendlyName([string]$kind, $scope) {
@@ -74,7 +86,9 @@ try {
     # ---------- form ----------
     $form = New-Object System.Windows.Forms.Form
     $form.Text = 'ClaudeCapper'
-    $form.Icon = [System.Drawing.SystemIcons]::Shield
+    $form.Icon = $appIcon
+    $form.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterScreen
+    $form.ShowInTaskbar = $true
     $form.FormBorderStyle = 'FixedSingle'
     $form.MaximizeBox = $false
     $form.ClientSize = New-Object System.Drawing.Size(460, 480)
@@ -82,7 +96,7 @@ try {
 
     # --- system tray icon & menu ---
     $notifyIcon = New-Object System.Windows.Forms.NotifyIcon
-    $notifyIcon.Icon = [System.Drawing.SystemIcons]::Shield
+    $notifyIcon.Icon = $appIcon
     $notifyIcon.Text = 'ClaudeCapper: Active'
     $notifyIcon.Visible = $true
 
@@ -104,6 +118,13 @@ try {
         }
         $form.Close()
         [System.Windows.Forms.Application]::Exit()
+    }
+
+    function Show-TrayBalloon {
+        if (-not $script:shownBalloon -and $notifyIcon) {
+            $notifyIcon.ShowBalloonTip(2500, "ClaudeCapper Running in Background", "ClaudeCapper is active in your system tray. Right-click the icon to pause or Exit.", [System.Windows.Forms.ToolTipIcon]::Info)
+            $script:shownBalloon = $true
+        }
     }
 
     $itemOpen = New-Object System.Windows.Forms.ToolStripMenuItem('Open ClaudeCapper')
@@ -290,10 +311,10 @@ try {
         if ($script:limits) { $weekly = $script:limits | Where-Object { $_.kind -eq 'weekly_all' } | Select-Object -First 1 }
         if ($weekly -and $weekly.resets_at) {
             $weekStart = [DateTimeOffset]::Parse($weekly.resets_at).AddDays(-7)
-            $dayNumber = [Math]::Floor(([DateTimeOffset]::UtcNow - $weekStart).TotalDays) + 1
+            $dayNumber = [Math]::Floor(([DateTimeOffset]::UtcNow - weekStart).TotalDays) + 1
             if ($dayNumber -lt 1) { $dayNumber = 1 }
             if ($dayNumber -gt 7) { $dayNumber = 7 }
-            $allowed = [Math]::Min([double]$numThreshold.Value, [double]$numPointsPerDay.Value * $dayNumber)
+            $allowed = [Math]::Min([double]$numThreshold.Value, [double]$numPointsPerDay.Value * dayNumber)
             $lblAllowedToday.Text = "Allowed so far (day $dayNumber of 7): $([Math]::Round($allowed,1))% of the weekly limit."
         } else {
             $lblAllowedToday.Text = 'Allowance is computed from the weekly reset time once usage loads.'
@@ -344,14 +365,24 @@ try {
         if (-not $script:loading) { Save-Config }
         $numPointsPerDay.Enabled = $chkPacing.Checked
         $lblPoints.Enabled = $chkPacing.Checked
-        Update-AllowedToday
+        UpdateAllowedToday
     })
-    $numPointsPerDay.Add_ValueChanged({ if (-not $script:loading) { Save-Config; Update-AllowedToday } })
+    $numPointsPerDay.Add_ValueChanged({ if (-not $script:loading) { Save-Config; UpdateAllowedToday } })
+
+    $form.Add_Shown({
+        $script:userInitialized = $true
+        $form.WindowState = [System.Windows.Forms.FormWindowState]::Normal
+        $form.ShowInTaskbar = $true
+        $form.BringToFront()
+        $form.Activate()
+        Refresh-Usage
+    })
 
     $form.Add_Resize({
-        if ($form.WindowState -eq [System.Windows.Forms.FormWindowState]::Minimized) {
+        if ($script:userInitialized -and $form.WindowState -eq [System.Windows.Forms.FormWindowState]::Minimized) {
             $form.Hide()
             $form.ShowInTaskbar = $false
+            Show-TrayBalloon
         }
     })
 
@@ -361,6 +392,7 @@ try {
             $e.Cancel = $true
             $form.Hide()
             $form.ShowInTaskbar = $false
+            Show-TrayBalloon
         } else {
             if ($notifyIcon) {
                 $notifyIcon.Visible = $false
@@ -379,7 +411,6 @@ try {
     $script:loading = $false
 
     Update-StatusLabel
-    Refresh-Usage
 
     [System.Windows.Forms.Application]::Run($form)
     $timer.Stop()
