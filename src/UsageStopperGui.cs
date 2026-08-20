@@ -15,6 +15,7 @@ using System.Drawing;
 using System.Globalization;
 using System.IO;
 using System.Net;
+using System.Threading;
 using System.Windows.Forms;
 using System.Web.Script.Serialization;
 
@@ -24,6 +25,8 @@ public class UsageStopperForm : Form
     string configFile;
     long pausedUntilEpoch = 0;
     bool loading = true;
+    bool shownBalloon = false;
+    bool userInitialized = false;
     ArrayList limits = null;
 
     Label lblStatus;
@@ -36,7 +39,10 @@ public class UsageStopperForm : Form
     Label[] rowName = new Label[4];
     ProgressBar[] rowBar = new ProgressBar[4];
     Label[] rowPct = new Label[4];
-    Timer timer;
+    System.Windows.Forms.Timer timer;
+    NotifyIcon notifyIcon;
+    ContextMenuStrip trayMenu;
+    bool isExiting = false;
 
     [STAThread]
     public static void Main()
@@ -45,12 +51,13 @@ public class UsageStopperForm : Form
         try
         {
             Application.EnableVisualStyles();
+            Application.SetCompatibleTextRenderingDefault(false);
             Application.Run(new UsageStopperForm(dir));
         }
         catch (Exception ex)
         {
             try { File.WriteAllText(Path.Combine(dir, "gui-error.log"), ex.ToString()); } catch { }
-            MessageBox.Show("ClaudeCapper failed to start. See gui-error.log.");
+            MessageBox.Show("ClaudeCapper failed to start: " + ex.Message, "ClaudeCapper Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
     }
 
@@ -61,10 +68,41 @@ public class UsageStopperForm : Form
         ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls12;
 
         Text = "ClaudeCapper";
+        Icon = SystemIcons.Shield;
+        StartPosition = FormStartPosition.CenterScreen;
+        ShowInTaskbar = true;
         FormBorderStyle = FormBorderStyle.FixedSingle;
         MaximizeBox = false;
         ClientSize = new Size(460, 480);
         Font = new Font("Segoe UI", 9f);
+
+        // Force handle creation so BeginInvoke is always valid
+        IntPtr forceHandle = this.Handle;
+
+        // ---- system tray icon & menu ----
+        notifyIcon = new NotifyIcon();
+        notifyIcon.Icon = SystemIcons.Shield;
+        notifyIcon.Text = "ClaudeCapper: Active";
+        notifyIcon.Visible = true;
+
+        trayMenu = new ContextMenuStrip();
+        ToolStripMenuItem itemOpen = new ToolStripMenuItem("Open ClaudeCapper", null, delegate { RestoreWindow(); });
+        itemOpen.Font = new Font(itemOpen.Font, FontStyle.Bold);
+        trayMenu.Items.Add(itemOpen);
+        trayMenu.Items.Add(new ToolStripSeparator());
+        trayMenu.Items.Add(new ToolStripMenuItem("Pause 30 min", null, delegate { SetPause(DateTimeOffset.UtcNow.ToUnixTimeSeconds() + 1800); }));
+        trayMenu.Items.Add(new ToolStripMenuItem("Pause 2 h", null, delegate { SetPause(DateTimeOffset.UtcNow.ToUnixTimeSeconds() + 7200); }));
+        trayMenu.Items.Add(new ToolStripMenuItem("Pause until resumed", null, delegate { SetPause(-1); }));
+        trayMenu.Items.Add(new ToolStripMenuItem("Resume", null, delegate { SetPause(0); }));
+        trayMenu.Items.Add(new ToolStripSeparator());
+        trayMenu.Items.Add(new ToolStripMenuItem("Exit", null, delegate { ExitApplication(); }));
+        notifyIcon.ContextMenuStrip = trayMenu;
+
+        notifyIcon.DoubleClick += delegate { RestoreWindow(); };
+        notifyIcon.MouseClick += delegate(object sender, MouseEventArgs e)
+        {
+            if (e.Button == MouseButtons.Left) { RestoreWindow(); }
+        };
 
         // ---- protection / pause ----
         GroupBox grpStatus = new GroupBox();
@@ -163,7 +201,7 @@ public class UsageStopperForm : Form
 
         Label lblFooter = new Label();
         lblFooter.SetBounds(12, 452, 436, 18);
-        lblFooter.Text = "Blocks apply to Claude Code everywhere on this machine (terminal, VS Code).";
+        lblFooter.Text = "Minimizing or closing hides to tray. Right-click tray icon to Exit.";
         lblFooter.ForeColor = Color.DimGray;
         Controls.Add(lblFooter);
 
@@ -186,7 +224,7 @@ public class UsageStopperForm : Form
             UpdateAllowedToday();
         };
 
-        timer = new Timer();
+        timer = new System.Windows.Forms.Timer();
         timer.Interval = 60000;
         timer.Tick += delegate { RefreshUsage(); UpdateStatusLabel(); };
         timer.Start();
@@ -196,7 +234,78 @@ public class UsageStopperForm : Form
         loading = false;
 
         UpdateStatusLabel();
-        Shown += delegate { RefreshUsage(); };
+    }
+
+    protected override void OnShown(EventArgs e)
+    {
+        base.OnShown(e);
+        userInitialized = true;
+        WindowState = FormWindowState.Normal;
+        ShowInTaskbar = true;
+        BringToFront();
+        Activate();
+        RefreshUsage();
+    }
+
+    void RestoreWindow()
+    {
+        Show();
+        WindowState = FormWindowState.Normal;
+        ShowInTaskbar = true;
+        BringToFront();
+        Activate();
+    }
+
+    void ExitApplication()
+    {
+        isExiting = true;
+        if (notifyIcon != null)
+        {
+            notifyIcon.Visible = false;
+            notifyIcon.Dispose();
+        }
+        Close();
+        Application.Exit();
+    }
+
+    protected override void OnResize(EventArgs e)
+    {
+        base.OnResize(e);
+        if (userInitialized && WindowState == FormWindowState.Minimized)
+        {
+            Hide();
+            ShowInTaskbar = false;
+            ShowTrayBalloon();
+        }
+    }
+
+    protected override void OnFormClosing(FormClosingEventArgs e)
+    {
+        if (!isExiting && e.CloseReason == CloseReason.UserClosing)
+        {
+            e.Cancel = true;
+            Hide();
+            ShowInTaskbar = false;
+            ShowTrayBalloon();
+        }
+        else
+        {
+            if (notifyIcon != null)
+            {
+                notifyIcon.Visible = false;
+                notifyIcon.Dispose();
+            }
+            base.OnFormClosing(e);
+        }
+    }
+
+    void ShowTrayBalloon()
+    {
+        if (!shownBalloon && notifyIcon != null)
+        {
+            notifyIcon.ShowBalloonTip(2500, "ClaudeCapper Running in Background", "ClaudeCapper is active in your system tray. Right-click the icon to pause or Exit.", ToolTipIcon.Info);
+            shownBalloon = true;
+        }
     }
 
     Button MakeButton(Control parent, string text, int x, int y, int w)
@@ -268,9 +377,18 @@ public class UsageStopperForm : Form
             body = reader.ReadToEnd();
         }
         var data = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(body);
-        if (!data.ContainsKey("limits") || !(data["limits"] is ArrayList))
+        if (!data.ContainsKey("limits") || data["limits"] == null)
             throw new Exception("usage response contained no limits field");
-        return (ArrayList)data["limits"];
+
+        ArrayList result = new ArrayList();
+        if (data["limits"] is IEnumerable)
+        {
+            foreach (object item in (IEnumerable)data["limits"])
+            {
+                result.Add(item);
+            }
+        }
+        return result;
     }
 
     static string FriendlyName(string kind, object scope)
@@ -300,32 +418,44 @@ public class UsageStopperForm : Form
 
     void RefreshUsage()
     {
-        try
+        lblFetched.Text = "Loading usage...";
+        ThreadPool.QueueUserWorkItem(delegate
         {
-            limits = FetchUsage();
-            int i = 0;
-            foreach (object o in limits)
+            try
             {
-                if (i >= 4) break;
-                var limit = (Dictionary<string, object>)o;
-                string reset = ResetLocal(limit);
-                string resetText = reset.Length > 0 ? " (resets " + reset + ")" : "";
-                object scope = limit.ContainsKey("scope") ? limit["scope"] : null;
-                double pct = Convert.ToDouble(limit["percent"], CultureInfo.InvariantCulture);
-                rowName[i].Text = FriendlyName((string)limit["kind"], scope) + resetText;
-                rowBar[i].Value = (int)Math.Min(100, Math.Max(0, pct));
-                rowPct[i].Text = pct.ToString("0.#", CultureInfo.InvariantCulture) + "%";
-                rowName[i].Visible = rowBar[i].Visible = rowPct[i].Visible = true;
-                i++;
+                ArrayList newLimits = FetchUsage();
+                BeginInvoke((MethodInvoker)delegate
+                {
+                    limits = newLimits;
+                    int i = 0;
+                    foreach (object o in limits)
+                    {
+                        if (i >= 4) break;
+                        var limit = (Dictionary<string, object>)o;
+                        string reset = ResetLocal(limit);
+                        string resetText = reset.Length > 0 ? " (resets " + reset + ")" : "";
+                        object scope = limit.ContainsKey("scope") ? limit["scope"] : null;
+                        double pct = Convert.ToDouble(limit["percent"], CultureInfo.InvariantCulture);
+                        rowName[i].Text = FriendlyName((string)limit["kind"], scope) + resetText;
+                        rowBar[i].Value = (int)Math.Min(100, Math.Max(0, pct));
+                        rowPct[i].Text = pct.ToString("0.#", CultureInfo.InvariantCulture) + "%";
+                        rowName[i].Visible = rowBar[i].Visible = rowPct[i].Visible = true;
+                        i++;
+                    }
+                    for (; i < 4; i++) rowName[i].Visible = rowBar[i].Visible = rowPct[i].Visible = false;
+                    lblFetched.Text = "Updated " + DateTime.Now.ToString("HH:mm:ss");
+                    UpdateAllowedToday();
+                });
             }
-            for (; i < 4; i++) rowName[i].Visible = rowBar[i].Visible = rowPct[i].Visible = false;
-            lblFetched.Text = "Updated " + DateTime.Now.ToString("HH:mm:ss");
-        }
-        catch (Exception ex)
-        {
-            lblFetched.Text = "Could not load usage: " + ex.Message;
-        }
-        UpdateAllowedToday();
+            catch (Exception ex)
+            {
+                BeginInvoke((MethodInvoker)delegate
+                {
+                    lblFetched.Text = "Could not load usage: " + ex.Message;
+                    UpdateAllowedToday();
+                });
+            }
+        });
     }
 
     void UpdateAllowedToday()
@@ -376,6 +506,14 @@ public class UsageStopperForm : Form
             lblStatus.Text = "Active: Claude Code stops before extra usage is spent";
             lblStatus.ForeColor = Color.ForestGreen;
         }
+
+        if (notifyIcon != null)
+        {
+            string statusText = (pausedUntilEpoch == -1) ? "PAUSED (manual)" : (pausedUntilEpoch > now) ? "PAUSED" : "Active";
+            string text = "ClaudeCapper: " + statusText;
+            if (text.Length > 63) text = text.Substring(0, 63);
+            notifyIcon.Text = text;
+        }
     }
 
     void SetPause(long untilEpoch)
@@ -385,4 +523,3 @@ public class UsageStopperForm : Form
         UpdateStatusLabel();
     }
 }
-

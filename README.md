@@ -52,6 +52,8 @@ If a rule trips, the script exits with code 2, Claude Code blocks the action, an
 
 Run `ClaudeCapper.exe` (or `usage-stopper-gui.ps1`). It shows live usage bars with reset times (refreshed every minute), the pause controls, and the two rules above. Every change is saved to `config.json` immediately.
 
+When minimized or closed, ClaudeCapper stays running in the Windows system tray / notification area to keep monitoring usage in the background. Left-click or double-click the tray icon to restore the window, or right-click the tray icon to pause/resume or Exit.
+
 The exe is unsigned, so Windows SmartScreen may show an "unknown publisher" warning on first run; choose "More info" then "Run anyway", or build it yourself from source with the compiler that ships with Windows:
 
 ```
