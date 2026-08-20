@@ -76,6 +76,9 @@ public class UsageStopperForm : Form
         ClientSize = new Size(460, 480);
         Font = new Font("Segoe UI", 9f);
 
+        // Force handle creation so BeginInvoke is always valid
+        IntPtr forceHandle = this.Handle;
+
         // ---- system tray icon & menu ----
         notifyIcon = new NotifyIcon();
         notifyIcon.Icon = SystemIcons.Shield;
@@ -421,42 +424,36 @@ public class UsageStopperForm : Form
             try
             {
                 ArrayList newLimits = FetchUsage();
-                if (this.IsHandleCreated && !this.IsDisposed)
+                BeginInvoke((MethodInvoker)delegate
                 {
-                    this.BeginInvoke((MethodInvoker)delegate
+                    limits = newLimits;
+                    int i = 0;
+                    foreach (object o in limits)
                     {
-                        limits = newLimits;
-                        int i = 0;
-                        foreach (object o in limits)
-                        {
-                            if (i >= 4) break;
-                            var limit = (Dictionary<string, object>)o;
-                            string reset = ResetLocal(limit);
-                            string resetText = reset.Length > 0 ? " (resets " + reset + ")" : "";
-                            object scope = limit.ContainsKey("scope") ? limit["scope"] : null;
-                            double pct = Convert.ToDouble(limit["percent"], CultureInfo.InvariantCulture);
-                            rowName[i].Text = FriendlyName((string)limit["kind"], scope) + resetText;
-                            rowBar[i].Value = (int)Math.Min(100, Math.Max(0, pct));
-                            rowPct[i].Text = pct.ToString("0.#", CultureInfo.InvariantCulture) + "%";
-                            rowName[i].Visible = rowBar[i].Visible = rowPct[i].Visible = true;
-                            i++;
-                        }
-                        for (; i < 4; i++) rowName[i].Visible = rowBar[i].Visible = rowPct[i].Visible = false;
-                        lblFetched.Text = "Updated " + DateTime.Now.ToString("HH:mm:ss");
-                        UpdateAllowedToday();
-                    });
-                }
+                        if (i >= 4) break;
+                        var limit = (Dictionary<string, object>)o;
+                        string reset = ResetLocal(limit);
+                        string resetText = reset.Length > 0 ? " (resets " + reset + ")" : "";
+                        object scope = limit.ContainsKey("scope") ? limit["scope"] : null;
+                        double pct = Convert.ToDouble(limit["percent"], CultureInfo.InvariantCulture);
+                        rowName[i].Text = FriendlyName((string)limit["kind"], scope) + resetText;
+                        rowBar[i].Value = (int)Math.Min(100, Math.Max(0, pct));
+                        rowPct[i].Text = pct.ToString("0.#", CultureInfo.InvariantCulture) + "%";
+                        rowName[i].Visible = rowBar[i].Visible = rowPct[i].Visible = true;
+                        i++;
+                    }
+                    for (; i < 4; i++) rowName[i].Visible = rowBar[i].Visible = rowPct[i].Visible = false;
+                    lblFetched.Text = "Updated " + DateTime.Now.ToString("HH:mm:ss");
+                    UpdateAllowedToday();
+                });
             }
             catch (Exception ex)
             {
-                if (this.IsHandleCreated && !this.IsDisposed)
+                BeginInvoke((MethodInvoker)delegate
                 {
-                    this.BeginInvoke((MethodInvoker)delegate
-                    {
-                        lblFetched.Text = "Could not load usage: " + ex.Message;
-                        UpdateAllowedToday();
-                    });
-                }
+                    lblFetched.Text = "Could not load usage: " + ex.Message;
+                    UpdateAllowedToday();
+                });
             }
         });
     }
